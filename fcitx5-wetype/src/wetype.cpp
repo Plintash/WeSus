@@ -948,9 +948,24 @@ void WeTypeEngine::processKey(KeyEvent &event) {
                              (sym >= FcitxKey_KP_0 && sym <= FcitxKey_KP_9))) {
             ic->propertyFor(&punctuationFactory_)->afterDigit = true;
         }
-        // Alphabet keys, including Shift/CapsLock symbols, become lowercase
+        // Shift + a letter asks for that capital explicitly: commit it instead of
+        // folding it into the pinyin buffer, so DNA, GDP and Hello can be typed
+        // without leaving the Chinese input state. Fcitx strips Shift off key()
+        // once the keysym is already uppercase, so the held-modifier test has to
+        // read rawKey(). Mid-composition shifting keeps the old behaviour
+        // (lowercase pinyin), because interrupting a pending candidate list would
+        // leave the preedit on screen behind the letter.
+        if (buf_.empty() && sym >= FcitxKey_A && sym <= FcitxKey_Z &&
+            event.rawKey().states().test(KeyState::Shift)) {
+            const std::string letter(1, static_cast<char>(sym));
+            WLOG("shift+alpha commits literal %s\n", letter.c_str());
+            rememberTrailing(ic, letter);
+            ic->commitString(letter);
+            handled = true;
+        }
+        // Alphabet keys, including CapsLock symbols, become lowercase
         // pinyin. Ctrl/Alt/Super/Meta shortcuts were passed through above.
-        if ((sym >= FcitxKey_a && sym <= FcitxKey_z) ||
+        else if ((sym >= FcitxKey_a && sym <= FcitxKey_z) ||
             (sym >= FcitxKey_A && sym <= FcitxKey_Z)) {
             if (buf_.empty()) recoveryTried_ = false;
             const bool replayBuffer = !eng_.alive() && !buf_.empty();
