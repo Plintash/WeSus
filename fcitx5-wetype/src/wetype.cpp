@@ -1032,7 +1032,9 @@ void WeTypeEngine::processKey(KeyEvent &event) {
                     handled = true;
                 }
             } else if (fullwidthPunctuation(ic, key)) {
-                ic->commitString(std::string(punctFor(ic, key, true)));
+                const std::string punct(punctFor(ic, key, true));
+                rememberTrailing(ic, punct);
+                ic->commitString(punct);
                 handled = true;
             }
         }

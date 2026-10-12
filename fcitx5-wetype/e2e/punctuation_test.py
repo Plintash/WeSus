@@ -177,6 +177,24 @@ consumed = surrounding.press("(")
 check("the digit exception covers only . and , so brackets stay fullwidth",
       consumed and surrounding.commits == ["（"], str(surrounding.commits))
 
+# A committed fullwidth symbol replaces the digit before the cursor, even when
+# the client cannot provide surrounding text or has not refreshed it yet.
+for with_surrounding in (False, True):
+    for key, expected in ((".", "。"), (",", "，")):
+        capabilities = BASE_CAPABILITIES | ((1 << 6) if with_surrounding else 0)
+        trailing = Client("wetype-punctuation-trailing-digit", capabilities)
+        trailing.focus()
+        if with_surrounding:
+            trailing.surrounding("3")
+        else:
+            assert not trailing.press("3"), "idle digit must pass through"
+        trailing.press("?")
+        consumed = trailing.press(key)
+        check("fullwidth symbol clears digit exception for %s (%s)" %
+              (key, "stale surrounding text" if with_surrounding else "no surrounding text"),
+              consumed and trailing.commits == ["？", expected], str(trailing.commits))
+        trailing.ic.FocusOut()
+
 structured = Client("wetype-punctuation-email", BASE_CAPABILITIES | (1 << 7))
 structured.focus()
 structured.type("nihao")
