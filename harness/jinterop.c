@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include "dict_table.h"
+#include "input_scheme.h"
 #include <sys/stat.h>
 #include <string.h>
 #include <dlfcn.h>
@@ -790,6 +791,7 @@ static void build_env(void) {
 }
 
 static JObj g_sesscfg;   /* daemon 重建会话复用 */
+static int g_double_pin_solution = 0;
 /* 嵌套配置对象：结构与默认值取自 APK 的 com/tencent/wxhld/info/SessionConfig（3.5.4）。
  * 真实 app 由 Java 构造函数填好默认值；这里若缺失，胶水层 auto-complete 会给全 0
  * 的空对象——其中 InputAugmenter 的 enable_exchange（相邻字母乱序纠错）等五个
@@ -802,7 +804,7 @@ static void build_sesscfg_nested(void) {
     obj_set(&g_wubicfg, "enable_comment", 'z', (void *)1);
     /* InputAugmenter{ exchange/keyboard_neighbour/insert_at_middle/skip=true（Java 默认，
      * app 的 ime_fault_* 设置默认 true 时不再覆盖），shift_key=false（app 的 h5() 总是显式置 false），
-     * 模糊音对全 false, double_pin_solution=0(DISABLED) } —— enable_exchange 即乱序纠错 */
+     * 模糊音对全 false；双拼由 WETYPE_DOUBLE_PINYIN 选择 } —— enable_exchange 即乱序纠错 */
     memset(&g_aug, 0, sizeof g_aug);
     g_aug.cls = "com/tencent/wxhld/info/SessionConfig$InputAugmenter";
     obj_set(&g_aug, "wubi_config", 'o', &g_wubicfg);
@@ -812,7 +814,7 @@ static void build_sesscfg_nested(void) {
     obj_set(&g_aug, "enable_keyboard_neighbour", 'z', (void *)1);
     obj_set(&g_aug, "enable_insert_at_middle", 'z', (void *)1);
     obj_set(&g_aug, "enable_skip", 'z', (void *)1);
-    obj_set(&g_aug, "double_pin_solution", 'i', (void *)0);
+    obj_set(&g_aug, "double_pin_solution", 'i', (void *)(long)g_double_pin_solution);
     /* LocalMostLikelyConfig{ emoji/text 相关 true } */
     memset(&g_lml, 0, sizeof g_lml);
     g_lml.cls = "com/tencent/wxhld/info/SessionConfig$LocalMostLikelyConfig";
@@ -1318,6 +1320,11 @@ static int print_module(struct dl_phdr_info *info, size_t size, void *data) {
 }
 
 int main(int argc, char **argv) {
+    g_double_pin_solution = wetype_double_pin_solution(getenv("WETYPE_DOUBLE_PINYIN"));
+    if (g_double_pin_solution < 0) {
+        fprintf(stderr, "Invalid WETYPE_DOUBLE_PINYIN: expected full or flypy\n");
+        return 2;
+    }
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     for (int i = 1; i < argc; i++)

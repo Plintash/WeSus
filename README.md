@@ -1,4 +1,63 @@
-# WeType Linux
+# WeType macOS
+
+本 fork 在原 Linux 项目上增加原生 macOS 输入法，默认使用**小鹤双拼**。App 使用 AppKit / InputMethodKit，候选和学习由官方 **macOS WeType 2.2.3 build 657** 的原生引擎产生；日常运行不需要 Android、QEMU、OrbStack 或 Linux VM。
+
+当前为开发预览版。已在 Apple Silicon / macOS 26.5.2 验证原生候选、部分选词、学习和重启持久化；输入法与应用兼容性仍需继续实测。原生接口是从固定版本二进制还原的 ABI，版本必须固定，不能直接替换成更新的官方包。调查与来源见 [原生引擎记录](docs/macos-native-engine.md)。
+
+## macOS 构建与安装
+
+需要 Xcode（包含 macOS SDK）、Python 3。脚本从腾讯下载并校验指定 ZIP，只在本机解包引擎；不会安装或启动官方客户端。引擎与字典不提交到本仓库，也不应进入项目发布包。
+
+```sh
+bash scripts/macos/prepare_native.sh   # 下载/校验官方 Mac 包，编译原生 helper
+bash scripts/macos/test_app.sh         # 组词状态、异步选词和故障回退测试
+python3 scripts/test_flypy.py --backend native  # 使用隔离词库的真实原生引擎回归
+bash scripts/macos/build_app.sh        # build/macos/WeTypeIME.app
+open build/macos/WeTypeIME.app --args --demo    # 无需切换系统输入法的测试窗口
+bash scripts/macos/install_app.sh      # 安装到 ~/Library/Input Methods
+```
+
+已有对应 ZIP 时，可传给 `prepare_native.sh /path/to/WeType_2.2.3_657.zip`，仍会验证 SHA-256。
+
+安装脚本会注册并添加 **WeType 小鹤双拼**，保留当前键盘选择。安装后在输入法菜单中切换即可；也可在“系统设置 → 键盘 → 输入法”里查看。第一次如果没有出现，注销并重新登录一次。测试窗口关闭不影响其他输入法；安装脚本保留本项目之前的 App 备份。
+
+原生版数据位于 `~/Library/Application Support/WeTypeIME/Dictionary`，日志位于 `~/Library/Logs/WeTypeIME/engine.log`。安装后不依赖源码目录；下载的原生引擎单独保存在 Application Support 下。
+
+当前交互：连续小鹤拼音、数字选词（第十项为 `0`）、`←` / `→` 移动高亮、空格确认、`↓` 展开首行加 4 行、每行 6 个候选的网格，展开后 `↑` / `↓` 换行。数字序号跟随高亮所在的整行移动，数字键选择该行对应的候选；末尾不足一整行时，空位数字不会选中其他行。在第一页首行按 `↑` 或按 Esc 收起，单行下 Esc 取消。`-` / `=`、`[` / `]`、Page Up / Down 翻页，退格删除，Enter 输出原始按键（展开时确认候选），支持 Shift 大写和中文标点。系统输入法通过 InputMethodKit 上屏，系统输入和独立测试窗口共用 AppKit 候选浮窗；同一个窗口在异步刷新期间保持可见，旧候选不能提前选中。macOS 26 使用原生 `NSGlassEffectView`，更旧系统回退为 `NSVisualEffectView` 材质，没有固定白色背景。展开和收起使用连续窗口动画，并遵守系统“减少动态效果”。未接入账号、云同步或官方完整客户端功能。
+
+### 原生设置
+
+在 WeType 输入菜单中选择“设置…”，或运行 `open build/macos/WeTypeIME.app --args --settings`。设置保存到当前用户，当前这次组词结束后，新输入自动采用新的配置。
+
+展开候选窗底部的齿轮也可打开设置。这里提供的是独立原生设置窗：当前查到的公开 InputMethodKit 设置接口是 `showPreferences:`，没有找到向“系统设置 → 键盘 → 输入源”右侧区域嵌入自定义选项的公开扩展点；不能将独立窗口称为已经嵌入系统设置。
+
+| 设置 | 范围 / 行为 | Linux 对应 |
+|---|---|---|
+| 拼音方案 | 默认小鹤双拼，可选全拼 | harness 的 `WETYPE_DOUBLE_PINYIN`（本 fork 新增） |
+| 单行候选数 | 1–10，默认 5 | Fcitx 全局“候选词数量” |
+| 候选总数上限 | 10 / 20 / 40 / 72 | `WETYPE_MAX_CAND`，默认最多 72 |
+| 英文释义 | 导入 UTF-8 TSV，格式 `词语<Tab>英文释义`；可开关显示 | 本地 `glossary-en.tsv`；同样去掉已知词性前缀，只影响显示 |
+| 中文标点 | 默认开启，可切换为半角标点 | Linux 默认开启；macOS 增加显式开关 |
+| 数据和日志 | 从设置直接打开对应文件夹 | 数据路径 / 日志路径环境变量在 macOS 使用固定用户目录 |
+
+导入的词表复制到 `~/Library/Application Support/WeTypeIME/glossary-en.tsv`，不依赖原文件；恢复默认设置保留词表和学习数据。Linux 的 QEMU、Android sysroot、JNI 回收、等待时限、跳过词库等运行时与排错变量不作为 macOS 日常设置。纠错和学习在原 Linux 项目中也没有独立设置界面，当前继续使用已验证的引擎默认配置。
+
+### Linux / Android 参考验证
+
+OrbStack 仅用于与原项目对照测试，不是原生 App 的依赖：
+
+```sh
+bash scripts/macos/prepare_dev.sh
+python3 scripts/test_flypy.py --backend orb --machine wetype-dev
+# 构建连接参考引擎的测试 App（默认构建始终是 native）
+WETYPE_APP_BACKEND=orb bash scripts/macos/build_app.sh
+```
+
+原项目的 harness 新增 `WETYPE_DOUBLE_PINYIN=flypy` / `full`，Linux 默认保持全拼。以下保留原 Linux 项目的功能和构建文档。
+
+---
+
+## WeType Linux（上游文档）
 
 在 Linux 上通过 Fcitx 5 使用微信输入法（WeType）引擎。引擎是 Android ARM64 版本，运行在 Android 自己的 C 运行时（AOSP bionic）上：x86_64 主机通过 QEMU user 模式运行，ARM64 主机原生运行，不需要 QEMU。
 

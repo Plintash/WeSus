@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>io.github.plintash.inputmethod.wetype</string>
+  <key>CFBundleName</key><string>WeType 小鹤双拼</string>
+  <key>CFBundleDisplayName</key><string>WeType 小鹤双拼</string>
+  <key>CFBundleExecutable</key><string>WeTypeIME</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>InputMethodConnectionName</key><string>io.github.plintash.inputmethod.wetype_Connection</string>
+  <key>InputMethodServerControllerClass</key><string>WeTypeInputController</string>
+  <key>tsInputMethodCharacterRepertoireKey</key><array><string>Hans</string><string>Hant</string><string>Latn</string></array>
+  <key>ComponentInputModeDict</key><dict>
+    <key>tsInputModeListKey</key><dict>
+      <key>io.github.plintash.inputmethod.wetype.flypy</key><dict>
+        <key>TISInputSourceID</key><string>io.github.plintash.inputmethod.wetype.flypy</string>
+        <key>TISIntendedLanguage</key><string>zh-Hans</string>
+        <key>tsInputModeDefaultStateKey</key><true/>
+        <key>tsInputModeIsVisibleKey</key><true/>
+        <key>tsInputModePrimaryInScriptKey</key><true/>
+        <key>tsInputModeScriptKey</key><string>smSimpChinese</string>
+        <key>tsInputModeMenuIconFileKey</key><string>InputSourceIcon.tiff</string>
+        <key>tsInputModeAlternateMenuIconFileKey</key><string>InputSourceIcon.tiff</string>
+        <key>tsInputModePaletteIconFileKey</key><string>InputSourceIcon.tiff</string>
+      </dict>
+    </dict>
+    <key>tsVisibleInputModeOrderedArrayKey</key><array><string>io.github.plintash.inputmethod.wetype.flypy</string></array>
+  </dict>
+  <key>tsInputMethodIconFileKey</key><string>InputSourceIcon.tiff</string>
+  <key>tsInputMethodAlternateIconFileKey</key><string>InputSourceIcon.tiff</string>
+  <key>LSBackgroundOnly</key><true/>
+  <key>TICapsLockLanguageSwitchCapable</key><true/>
+</dict></plist>
