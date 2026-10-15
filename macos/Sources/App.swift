@@ -46,13 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let main = NSMenu()
-        let appMenu = NSMenu(title: "WeType")
+        let appMenu = NSMenu(title: "巨疑")
         appMenu.addItem(withTitle: "打开测试窗口", action: #selector(showDemo), keyEquivalent: "")
         appMenu.items.last?.target = self
         appMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         appMenu.items.last?.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "退出 WeType", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "退出巨疑输入法", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let appItem = NSMenuItem()
         appItem.submenu = appMenu
         main.addItem(appItem)
@@ -90,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
-        window.title = "WeType · 小鹤双拼"
+        window.title = "巨疑 · 小鹤双拼"
         window.minSize = NSSize(width: 540, height: 360)
         window.delegate = self
         window.isReleasedWhenClosed = false

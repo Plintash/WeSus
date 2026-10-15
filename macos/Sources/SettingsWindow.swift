@@ -14,7 +14,7 @@ final class SettingsWindowController: NSWindowController {
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "WeType 设置"
+        window.title = "巨疑设置"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         scheme.addItems(withTitles: ["小鹤双拼", "全拼"])

@@ -8,8 +8,10 @@ xcrun swiftc -swift-version 5 -parse-as-library -O -target "$(uname -m)-apple-ma
   -framework AppKit -framework InputMethodKit macos/Sources/*.swift \
   -o "$APP/Contents/MacOS/WeTypeIME"
 cp macos/Info.plist "$APP/Contents/Info.plist"
-xcrun swift macos/Tools/GenerateInputSourceIcon.swift assets/wetype-ime.png \
-  "$APP/Contents/Resources/InputSourceIcon.tiff"
+ICON_OUTPUT="$BASE/build/macos/wesus-artwork"
+xcrun swift macos/Tools/GenerateInputSourceIcon.swift "$ICON_OUTPUT"
+cp "$ICON_OUTPUT/WeSusMenuTemplate.pdf" "$APP/Contents/Resources/"
+iconutil --convert icns "$ICON_OUTPUT/WeSus.iconset" --output "$APP/Contents/Resources/WeSus.icns"
 cp -R macos/Resources/. "$APP/Contents/Resources/"
 if [[ "${WETYPE_APP_BACKEND:-native}" == native ]]; then
   xcrun clang++ -std=c++17 -O2 -Wall -Wextra -mmacosx-version-min=13.0 -framework Foundation \

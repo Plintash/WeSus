@@ -34,7 +34,7 @@ if let list = TISCreateInputSourceList(filter, true) {
             if enabled != noErr { fputs("Input source enable returned \(enabled).\n", stderr) }
         }
     }
-    print("Enabled WeType 小鹤双拼; current keyboard selection is unchanged.")
+    print("Enabled 巨疑输入法; current keyboard selection is unchanged.")
 } else {
     print("Registration accepted; input-source discovery may require a new login session.")
 }

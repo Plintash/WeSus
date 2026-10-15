@@ -46,5 +46,5 @@ codesign --force --sign - "$DEST"
 xcrun swiftc macos/Tools/RegisterInputMethod.swift -o build/macos/register-input-method
 build/macos/register-input-method "$DEST" || true
 echo "Installed: $DEST"
-echo "Add WeType 小鹤双拼 in System Settings → Keyboard → Input Sources."
+echo "Add 巨疑输入法 in System Settings → Keyboard → Input Sources."
 echo "If it is not listed yet, log out and back in once."
