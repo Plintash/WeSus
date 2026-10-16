@@ -31,6 +31,14 @@ bash scripts/macos/install_app.sh
 
 安装后从菜单栏切换到 **WeSus**（中文系统显示 **巨疑输入法**）。也可在“系统设置 → 键盘 → 输入法”中查看。首次安装若未出现在菜单中，注销并重新登录一次。
 
+升级时若 Control + Space 的切换浮层仍显示旧图标，重新执行安装脚本。脚本会使用干净的构建目录、带内容版本号的图标资源，归档旧应用备份并注销其应用注册，再检查系统输入源实际引用的图标路径，并刷新当前用户的系统输入切换浮层、菜单和光标指示服务。这些服务会短暂消失并按需重新启动；安装时设置 `WETYPE_REFRESH_INPUT_UI=0` 可跳过刷新。旧版本保存在 `~/Library/Application Support/WeTypeIME/AppBackups/*.zip`，需要恢复时先解压到临时目录；不要把旧 `.app` 长期留在备份目录，以免重复注册。
+
+若只需刷新图标，无需重新构建或安装：
+
+```sh
+python3 scripts/macos/refresh_input_ui.py
+```
+
 已有官方 ZIP 时可直接指定，仍会验证 SHA-256：
 
 ```sh
@@ -99,6 +107,7 @@ open build/macos/WeTypeIME.app --args --settings
 
 ```sh
 bash scripts/macos/test_app.sh
+python3 scripts/macos/test_installation.py # 先运行 build_app.sh，检查打包图标和备份恢复
 python3 scripts/test_flypy.py --backend native
 ```
 

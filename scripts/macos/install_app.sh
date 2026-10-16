@@ -22,16 +22,9 @@ if [[ -f "$VENDOR/Contents/MacOS/WeType" ]]; then
 else
   ditto .deps/mac-engine/WeType.app "$VENDOR"
 fi
-# These are our own generated locations; preserve the previous app for recovery.
-if [[ -d "$DEST" ]]; then
-  ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/Contents/Info.plist")"
-  [[ "$ID" == io.github.plintash.inputmethod.wetype || "$ID" == io.github.plintash.wetype-ime ]] || {
-    echo "An unrelated app already exists at $DEST." >&2; exit 1;
-  }
-  mkdir -p "$SUPPORT/AppBackups"
-  BACKUP="$SUPPORT/AppBackups/WeTypeIME.$(date +%Y%m%d%H%M%S).app"
-  mv "$DEST" "$BACKUP"
-fi
+# Raw .app backups can be rediscovered with the same bundle ID and old icons.
+# Migrate our existing backups too, retaining a restorable ZIP for each one.
+python3 scripts/macos/archive_app.py "$SUPPORT/AppBackups" "$DEST"
 ditto build/macos/WeTypeIME.app "$DEST"
 python3 - "$DEST" "$SUPPORT" <<'PY'
 import plistlib, sys
@@ -44,7 +37,15 @@ with (app / 'Contents/Resources/EngineCommand.plist').open('wb') as f:
 PY
 codesign --force --sign - "$DEST"
 xcrun swiftc macos/Tools/RegisterInputMethod.swift -o build/macos/register-input-method
-build/macos/register-input-method "$DEST" || true
+build/macos/register-input-method "$DEST"
+# Read in a fresh process so the registrar's own TIS objects cannot mask a
+# stale system registration. Fail installation instead of reporting success.
+build/macos/register-input-method "$DEST" --verify
+# The switcher and caret indicator keep their own images in memory even when
+# TIS already reports the new resource URLs. Refresh the current user's UI.
+if [[ "${WETYPE_REFRESH_INPUT_UI:-1}" == 1 ]]; then
+  python3 scripts/macos/refresh_input_ui.py
+fi
 echo "Installed: $DEST"
 echo "Add 巨疑输入法 in System Settings → Keyboard → Input Sources."
 echo "If it is not listed yet, log out and back in once."

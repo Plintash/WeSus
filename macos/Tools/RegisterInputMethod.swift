@@ -5,8 +5,53 @@ import CoreServices
 
 _ = NSApplication.shared
 
-guard CommandLine.arguments.count == 2 else { exit(2) }
-let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+guard CommandLine.arguments.count == 2 ||
+        (CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--verify") else { exit(2) }
+let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true).standardizedFileURL
+let verifyOnly = CommandLine.arguments.count == 3
+let infoURL = url.appendingPathComponent("Contents/Info.plist")
+guard let data = try? Data(contentsOf: infoURL),
+      let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+      let bundleID = info["CFBundleIdentifier"] as? String,
+      let methodIcon = info["tsInputMethodIconFileKey"] as? String,
+      let component = info["ComponentInputModeDict"] as? [String: Any],
+      let modes = component["tsInputModeListKey"] as? [String: [String: Any]] else {
+    fputs("Invalid input method Info.plist: \(infoURL.path)\n", stderr)
+    exit(1)
+}
+let filter = [kTISPropertyBundleID as String: bundleID] as CFDictionary
+
+if verifyOnly {
+    let sources = TISCreateInputSourceList(filter, true).takeRetainedValue() as! [TISInputSource]
+    var remaining = Set([bundleID] + Array(modes.keys))
+    var valid = true
+    for source in sources {
+        guard let idPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
+        let id = Unmanaged<CFString>.fromOpaque(idPointer).takeUnretainedValue() as String
+        remaining.remove(id)
+        let iconName = id == bundleID ? methodIcon : modes[id]?["tsInputModeMenuIconFileKey"] as? String
+        guard let iconName,
+              let iconPointer = TISGetInputSourceProperty(source, kTISPropertyIconImageURL) else {
+            fputs("Missing registered icon for \(id).\n", stderr)
+            valid = false
+            continue
+        }
+        let actual = Unmanaged<CFURL>.fromOpaque(iconPointer).takeUnretainedValue() as URL
+        let expected = url.appendingPathComponent("Contents/Resources").appendingPathComponent(iconName)
+        guard actual.standardizedFileURL == expected.standardizedFileURL,
+              let image = NSImage(contentsOf: expected), image.size == NSSize(width: 18, height: 18) else {
+            fputs("Stale or unreadable icon for \(id): \(actual.path); expected \(expected.path). Log out and back in to refresh this login session.\n", stderr)
+            valid = false
+            continue
+        }
+        print("Verified \(id): \(iconName)")
+    }
+    if !remaining.isEmpty {
+        fputs("Missing registered input sources: \(remaining.sorted()).\n", stderr)
+        valid = false
+    }
+    exit(valid ? 0 : 1)
+}
 // Replacing a bundle can leave Launch Services holding its former metadata.
 // Update this app explicitly before rebuilding the text-input source cache.
 let applicationRegistration = LSRegisterURL(url as CFURL, true)
@@ -19,19 +64,21 @@ guard result == noErr else {
     fputs("Input source registration returned \(result). Log out and back in if necessary.\n", stderr)
     exit(1)
 }
-let filter = [kTISPropertyBundleID as String: "io.github.plintash.inputmethod.wetype"] as CFDictionary
 if let list = TISCreateInputSourceList(filter, true) {
     let sources = list.takeRetainedValue() as! [TISInputSource]
     print("Registered input sources: \(sources.count)")
     // Carbon requires the parent input method to be enabled before a mode.
     // Enabling only the mode succeeds, but selecting it then returns paramErr.
-    for wanted in ["io.github.plintash.inputmethod.wetype", "io.github.plintash.inputmethod.wetype.flypy"] {
+    for wanted in [bundleID] + modes.keys.sorted() {
         for source in sources {
             guard let value = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { continue }
             let id = Unmanaged<CFString>.fromOpaque(value).takeUnretainedValue() as String
             guard id == wanted else { continue }
             let enabled = TISEnableInputSource(source)
-            if enabled != noErr { fputs("Input source enable returned \(enabled).\n", stderr) }
+            if enabled != noErr {
+                fputs("Input source enable returned \(enabled).\n", stderr)
+                exit(1)
+            }
         }
     }
     print("Enabled 巨疑输入法; current keyboard selection is unchanged.")
