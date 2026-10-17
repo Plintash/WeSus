@@ -200,7 +200,7 @@ public:
 
     void discardIterators() { deleteIterators(takeIterators()); }
 
-    std::vector<Candidate> candidates() {
+    std::vector<Candidate> candidates(size_t inputLength) {
         auto values = takeIterators();
         std::vector<Candidate> result;
         try {
@@ -212,8 +212,13 @@ public:
                 }
                 for (int i = 0; i < limit && api.nextCandidate(values.back(), candidate.data); i++) {
                     // These pointers are borrowed and change at the NEXT call.
+                    uint32_t cover = field<uint32_t>(candidate.data, 100);
+                    // Generated date/time candidates use -1 (UINT32_MAX) for
+                    // the whole composition. The line protocol and selection
+                    // bookkeeping both require a physical key count.
+                    if (cover == UINT32_MAX) cover = static_cast<uint32_t>(inputLength);
                     result.push_back({stringField(candidate.data, 0, 8), stringField(candidate.data, 32, 40),
-                                      field<uint32_t>(candidate.data, 100)});
+                                      cover});
                 }
             }
         } catch (...) { deleteIterators(values); throw; }
@@ -285,7 +290,7 @@ static int run(FILE *output, int argc, char **argv) {
                     keys += key;
                     if (line[0] == 'L') break;
                 }
-                if (valid) { words = engine.candidates(); replyCandidates(output, words, spans); }
+                if (valid) { words = engine.candidates(keys.size()); replyCandidates(output, words, spans); }
                 else { engine.reset(); keys.clear(); words.clear(); std::fprintf(output, "ERR\n"); }
                 continue;
             }
@@ -301,7 +306,7 @@ static int run(FILE *output, int argc, char **argv) {
                     std::fprintf(output, "ERR\n"); continue;
                 }
                 keys.erase(0, chosen.cover);
-                words = engine.candidates();
+                words = engine.candidates(keys.size());
                 if (keys.empty()) { words.clear(); std::fprintf(output, "OK\n"); }
                 else replyCandidates(output, words, spans);
                 continue;

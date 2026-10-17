@@ -114,6 +114,8 @@ void listener(uint64_t session, int *event_types, void **payloads,
 
 callback 创建的 iterator 必须单独通过 `wxime_delete_candidate_iterator` 归还。测试在 `process_input` 返回后删除中间 iterator，在取完最终候选后删除最终 iterator；保留的是自己复制的候选 text / ID。不要将 `process_input` 的 bool 返回值当作 iterator。
 
+日期、时间等动态候选的 `cover_input_len` 实测可能为 `UINT32_MAX`（`4294967295`），表示覆盖当前整段输入，而非真实按键数。例如小鹤 `uij` / `uijm` 和全拼 `shij` / `shijian` 的候选混有 `HH:mm`，`riqi` 混有 `M月D日`。原生适配层在复制候选时将这一特殊值转换为当前剩余输入的物理键数，供协议输出和选词后的输入消耗共同使用；其余覆盖长度不做放宽。否则前端会因这一项越界而拒绝整批候选，连普通的“时间”也无法显示，动态候选的选词也会被适配层拒绝。`macos/Tests/TimeCandidates/main.swift` 通过真实进程验证逐键候选、普通“时间”上屏、动态日期时间选词及部分选词后的剩余输入，两种拼音方案均覆盖；运行命令为 `bash scripts/macos/test_app.sh`。
+
 测试程序在退出前执行 `destroy_session` 和 `finalize`，之后 `_Exit(0)`。这既完成引擎显式清理和学习落盘，又避免加载的整个官方 App 的静态析构流程。早期只加载后普通退出，在未完整初始化的异常路径上观察到 `recursive_mutex lock failed`。不建议对主程序执行 `dlclose`。
 
 官方主程序的静态构造函数会输出 `LOG Library Init ERROR : Find Module path failed`，但后续候选、选词和学习调用均正常。helper 必须提前复制 stdout 作为协议出口，然后把普通 stdout 重定向 stderr，防止这些打印破坏 `READY` / `CAND` 协议。
