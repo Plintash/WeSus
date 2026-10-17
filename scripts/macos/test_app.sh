@@ -23,4 +23,9 @@ if [[ -d .deps/mac-engine/WeType.app ]]; then
   xcrun swiftc -swift-version 5 macos/Sources/Preferences.swift macos/Sources/Composition.swift macos/Sources/ProcessEngine.swift \
     macos/Tests/TimeCandidates/main.swift -o build/macos/time-candidates-test
   build/macos/time-candidates-test "$BASE"
+  python3 scripts/test_learning_reset.py
+  xcrun swiftc -swift-version 5 -framework AppKit macos/Sources/Preferences.swift macos/Sources/Composition.swift \
+    macos/Sources/ProcessEngine.swift macos/Sources/LearningReset.swift macos/Sources/SettingsWindow.swift \
+    macos/Tests/LearningReset/main.swift -o build/macos/learning-reset-test
+  build/macos/learning-reset-test "$BASE"
 fi

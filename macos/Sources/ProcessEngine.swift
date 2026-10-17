@@ -26,6 +26,9 @@ struct EngineCommand {
 }
 
 final class ProcessEngine: EngineConnection {
+    private static let connections = NSHashTable<ProcessEngine>.weakObjects()
+    private static var resettingLearning = false
+    private static var stoppingTasks: [(URL, Process)] = []
     var onFailure: (() -> Void)?
     var onStatus: ((String) -> Void)?
     private let command: EngineCommand
@@ -39,15 +42,59 @@ final class ProcessEngine: EngineConnection {
     private var waiting: [(String, (String) -> Void)] = []
     private var handlers: [(String) -> Void] = []
     private var watchdog: DispatchWorkItem?
+    private var hasInput = false
 
-    init(command: EngineCommand) { self.command = command }
+    init(command: EngineCommand) {
+        self.command = command
+        Self.connections.add(self)
+    }
 
     func send(_ command: String, reply: @escaping (String) -> Void) {
+        guard !Self.resettingLearning else { reply("ERR_BUSY"); return }
         guard !failed else { return }
         if process == nil { start() }
         guard !failed else { return }
-        if ready { write(command, reply: reply) } else { waiting.append((command, reply)) }
+        let wrapped: (String) -> Void = { [weak self] line in
+            if command == "C" && line == "OK" || command.hasPrefix("S ") && line == "OK" {
+                self?.hasInput = false
+            }
+            reply(line)
+        }
+        if command.hasPrefix("B ") || command.hasPrefix("L ") { hasInput = true }
+        if ready { write(command, reply: wrapped) } else { waiting.append((command, wrapped)) }
     }
+
+    // Stop every helper using this dictionary before copying it or opening it
+    // for maintenance. Idle Composition objects can restart their connections
+    // on the next keystroke; no cached candidates survive a reset.
+    static func prepareLearningReset(dictionary: URL, completion: @escaping (Bool) -> Void) -> Bool {
+        guard !resettingLearning else { return false }
+        let engines = connections.allObjects.filter {
+            $0.command.executable.lastPathComponent == "WeTypeNativeEngine" &&
+            $0.command.arguments.count == 3 &&
+            URL(fileURLWithPath: $0.command.arguments[1]).standardizedFileURL == dictionary.standardizedFileURL
+        }
+        guard engines.allSatisfy({ !$0.hasInput && $0.waiting.isEmpty && $0.handlers.isEmpty }) else { return false }
+        resettingLearning = true
+        for engine in engines { _ = engine.stopTask() }
+        // Deactivating an input client can already have initiated shutdown.
+        // Keep those processes until they exit even if their owner was released.
+        let tasks = stoppingTasks.filter { $0.0 == dictionary.standardizedFileURL }.map { $0.1 }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+            for task in tasks where task.isRunning { kill(task.processIdentifier, SIGKILL) }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for task in tasks { task.waitUntilExit() }
+            let saved = tasks.allSatisfy { $0.terminationReason == .exit && $0.terminationStatus == 0 }
+            DispatchQueue.main.async {
+                stoppingTasks.removeAll { !$0.1.isRunning }
+                completion(saved)
+            }
+        }
+        return true
+    }
+
+    static func finishLearningReset() { resettingLearning = false }
 
     private func start() {
         onStatus?("正在连接引擎…")
@@ -155,7 +202,9 @@ final class ProcessEngine: EngineConnection {
         onFailure?()
     }
 
-    func stop() {
+    func stop() { _ = stopTask() }
+
+    private func stopTask() -> Process? {
         watchdog?.cancel()
         watchdog = nil
         output?.readabilityHandler = nil
@@ -166,6 +215,11 @@ final class ProcessEngine: EngineConnection {
         let task = process
         process = nil
         task?.terminationHandler = nil
+        Self.stoppingTasks.removeAll { !$0.1.isRunning }
+        if let task, task.processIdentifier > 0,
+           command.executable.lastPathComponent == "WeTypeNativeEngine", command.arguments.count == 3 {
+            Self.stoppingTasks.append((URL(fileURLWithPath: command.arguments[1]).standardizedFileURL, task))
+        }
         if let task, task.isRunning {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 if task.isRunning { task.terminate() }
@@ -178,6 +232,8 @@ final class ProcessEngine: EngineConnection {
         ready = false
         waiting = []
         handlers = []
+        hasInput = false
+        return task
     }
 
     deinit { stop() }

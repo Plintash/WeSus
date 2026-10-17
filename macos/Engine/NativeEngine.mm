@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <csignal>
+#include <cctype>
 #include <algorithm>
 #include <cstdlib>
 #include <cstdint>
@@ -13,12 +14,14 @@
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
+static thread_local std::vector<std::string> *learningLogs = nullptr;
 
 template <size_t Size> struct Record {
     alignas(8) unsigned char data[Size]{};
@@ -72,6 +75,7 @@ struct API {
                             const char *, uint32_t, const char *, uint32_t,
                             void *, uint32_t, const void *);
     void (*finalize)();
+    bool (*loadAndExecute)(const char *);
 
     explicit API(void *handle) {
 #define LOAD(member, symbol) \
@@ -89,6 +93,7 @@ struct API {
         LOAD(destroySession, "wxime_destroy_session")
         LOAD(selectCandidate, "wxime_select_candidate")
         LOAD(finalize, "wxime_finalize")
+        LOAD(loadAndExecute, "wxime_load_and_execute")
 #undef LOAD
         if (std::strcmp(version(), "0.45.0.weekly_release/2026.08.05.b95d82518"))
             throw std::runtime_error("unsupported engine version; prepare the pinned WeType 2.2.3 package");
@@ -108,6 +113,7 @@ class Engine {
     std::vector<uint64_t> iterators;
 
     static void logger(int level, const char *message) {
+        if (learningLogs && message) { learningLogs->emplace_back(message); return; }
         if (level >= 3 && message) std::fprintf(stderr, "[native-engine] %s\n", message);
     }
 
@@ -200,14 +206,15 @@ public:
 
     void discardIterators() { deleteIterators(takeIterators()); }
 
-    std::vector<Candidate> candidates(size_t inputLength) {
+    std::vector<Candidate> candidates(size_t inputLength, int requestedLimit = 0) {
         auto values = takeIterators();
         std::vector<Candidate> result;
         try {
             if (!values.empty()) {
                 Record<112> candidate;
                 int limit = 72;
-                if (const char *value = std::getenv("WETYPE_MAX_CAND")) {
+                if (requestedLimit) limit = requestedLimit;
+                else if (const char *value = std::getenv("WETYPE_MAX_CAND")) {
                     try { limit = std::clamp(std::stoi(value), 10, 72); } catch (...) {}
                 }
                 for (int i = 0; i < limit && api.nextCandidate(values.back(), candidate.data); i++) {
@@ -240,6 +247,151 @@ public:
     }
 
     void reset() { discardIterators(); api.resetSession(session); discardIterators(); }
+
+    bool localCommand(NSDictionary *command) {
+        NSData *json = [NSJSONSerialization dataWithJSONObject:command options:0 error:nullptr];
+        if (!json) return false;
+        std::string pattern = (fs::path(workDirectory) / ".maintenance.XXXXXX").string();
+        std::vector<char> path(pattern.begin(), pattern.end());
+        path.push_back(0);
+        int fd = mkstemp(path.data()); // private, unique file; no user-supplied path
+        if (fd < 0) return false;
+        FILE *file = fdopen(fd, "wb");
+        bool written = false;
+        if (file) {
+            written = std::fwrite(json.bytes, 1, json.length, file) == json.length;
+            if (std::fclose(file)) written = false;
+        } else { close(fd); }
+        bool success = written && api.loadAndExecute(path.data());
+        unlink(path.data());
+        return success;
+    }
+
+    bool forget(const std::string &pinyin, const std::string &word) {
+        std::string syllables = pinyin;
+        std::replace(syllables.begin(), syllables.end(), '\'', ',');
+        bool success = localCommand(@{@"commands": @[@{@"type": @"remove_user_dict_item",
+            @"value": @[@{@"syllable": @(syllables.c_str()), @"word": @(word.c_str())}]}]});
+        reset();
+        return success;
+    }
+
+    std::vector<std::string> capture(NSDictionary *command) {
+        std::vector<std::string> messages;
+        learningLogs = &messages;
+        bool success = false;
+        try { success = localCommand(command); }
+        catch (...) { learningLogs = nullptr; throw; }
+        learningLogs = nullptr;
+        if (!success) throw std::runtime_error("could not inspect learned words");
+        return messages;
+    }
+
+    NSData *learnedWords() {
+        // These version-pinned diagnostic commands are read-only. Capture only
+        // their C logger callback; the maintenance subprocess discards stderr.
+        auto scan = capture(@{@"commands": @[@{@"type": @"scan_user_dict_syllables"}]});
+        std::unordered_set<std::string> seen;
+        NSMutableArray *syllables = [NSMutableArray array];
+        for (const auto &line : scan) {
+            auto marker = line.find("syllables:");
+            if (marker == std::string::npos) continue;
+            std::string keys = line.substr(marker + 10);
+            size_t start = 0;
+            while (start < keys.size()) {
+                size_t end = keys.find('$', start);
+                std::string key = keys.substr(start, end == std::string::npos ? end : end - start);
+                while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back()))) key.pop_back();
+                bool valid = !key.empty() && key.size() <= 256;
+                for (char c : key) if (!((c >= 'a' && c <= 'z') || c == ',')) valid = false;
+                if (valid && seen.insert(key).second) [syllables addObject:@(key.c_str())];
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+        }
+        auto detail = capture(@{@"commands": @[@{@"type": @"lookup_user_dict_syllables", @"value": syllables}]});
+        struct Entry { std::string word, pinyin; int count; double time, heat, history; int current = 0, base = 0; };
+        std::map<std::string, Entry> entries;
+        std::string current;
+        for (const auto &line : detail) {
+            auto lookup = line.find("LookUp:");
+            if (lookup != std::string::npos) {
+                current = line.substr(lookup + 7);
+                while (!current.empty() && std::isspace(static_cast<unsigned char>(current.back()))) current.pop_back();
+            }
+            auto word = line.find("word:");
+            auto count = line.rfind(", count:");
+            auto time = line.rfind(", time:");
+            auto heat = line.rfind(", hot val:");
+            auto history = line.rfind(", spur_history_hot_val:");
+            if (word == std::string::npos || count == std::string::npos || time == std::string::npos ||
+                heat == std::string::npos || history == std::string::npos || !seen.count(current)) continue;
+            try {
+                Entry entry{line.substr(word + 5, count - word - 5), current, std::stoi(line.substr(count + 8)),
+                    std::stod(line.substr(time + 7)), std::stod(line.substr(heat + 10)), std::stod(line.substr(history + 23))};
+                if (entry.count <= 0 || entry.word.empty()) continue;
+                auto key = current + '\t' + entry.word;
+                auto found = entries.find(key);
+                if (found == entries.end() || entry.time >= found->second.time) entries[key] = entry;
+            } catch (const std::exception &) { throw std::runtime_error("unsupported learned-word diagnostic format"); }
+        }
+
+        NSMutableArray *result = [NSMutableArray array];
+        for (auto &[key, entry] : entries) {
+            std::replace(entry.pinyin.begin(), entry.pinyin.end(), ',', '\'');
+            [result addObject:@{@"word": @(entry.word.c_str()), @"pinyin": @(entry.pinyin.c_str()),
+                @"count": @(entry.count), @"lastUsed": @(entry.time), @"heat": @(entry.heat),
+                @"historyHeat": @(entry.history), @"currentRank": @(entry.current), @"baseRank": @(entry.base)}];
+        }
+        return rankWords(result);
+    }
+
+    NSData *rankWords(NSArray *records) {
+        if (records.count > 20000) throw std::runtime_error("too many learned words");
+        NSMutableArray *result = [NSMutableArray array];
+        std::map<std::string, std::vector<NSMutableDictionary *>> groups;
+        for (id record in records) {
+            if (![record isKindOfClass:[NSDictionary class]]) throw std::runtime_error("invalid learned word");
+            NSString *pinyin = record[@"pinyin"], *word = record[@"word"];
+            if (![pinyin isKindOfClass:[NSString class]] || ![word isKindOfClass:[NSString class]] ||
+                !pinyin.length || pinyin.length > 256 || !word.length || word.length > 256)
+                throw std::runtime_error("invalid learned word");
+            std::string keys(pinyin.UTF8String);
+            for (char c : keys) if (!((c >= 'a' && c <= 'z') || c == '\''))
+                throw std::runtime_error("invalid learned-word reading");
+            NSMutableDictionary *entry = [record mutableCopy];
+            entry[@"currentRank"] = @0;
+            [result addObject:entry];
+            groups[keys].push_back(entry);
+        }
+        uint64_t original = session, querySession = 0;
+        auto cleanup = [&] {
+            discardIterators();
+            if (querySession) { session = querySession; api.destroySession(querySession); discardIterators(); }
+            session = original;
+        };
+        try {
+            Record<312> options = sessionConfig;
+            options.set<uint32_t>(32, 0);
+            querySession = api.createSession(options.data);
+            if (!querySession) throw std::runtime_error("could not inspect learned-word ranks");
+            session = querySession;
+            api.addListener(session, reinterpret_cast<void *>(&listener), this);
+            for (auto &[keys, words] : groups) {
+                reset();
+                bool valid = true;
+                for (char key : keys) if (!input(key)) { valid = false; break; }
+                auto matches = valid ? candidates(keys.size(), 72) : std::vector<Candidate>();
+                for (NSMutableDictionary *entry : words) {
+                    std::string word([entry[@"word"] UTF8String]);
+                    auto match = std::find_if(matches.begin(), matches.end(), [&](const auto &candidate) { return candidate.text == word; });
+                    if (match != matches.end()) entry[@"currentRank"] = @(static_cast<int>(match - matches.begin()) + 1);
+                }
+            }
+        } catch (...) { cleanup(); throw; }
+        cleanup();
+        return [NSJSONSerialization dataWithJSONObject:result options:0 error:nullptr];
+    }
 
     ~Engine() {
         discardIterators();
@@ -280,6 +432,45 @@ static int run(FILE *output, int argc, char **argv) {
             if (line == "OPT spans") { spans = true; std::fprintf(output, "OK\n"); continue; }
             if (line == "SAVE") { std::fprintf(output, "OK\n"); continue; }
             if (line == "C") { engine.reset(); keys.clear(); words.clear(); std::fprintf(output, "OK\n"); continue; }
+            if (line.rfind("RANKS\t", 0) == 0) {
+                if (!keys.empty()) { std::fprintf(output, "ERR_BUSY\n"); continue; }
+                NSData *bytes = [[NSData alloc] initWithBase64EncodedString:@(line.substr(6).c_str()) options:0];
+                id records = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nullptr] : nil;
+                if (![records isKindOfClass:[NSArray class]]) { std::fprintf(output, "ERR\n"); continue; }
+                NSData *data = engine.rankWords(records);
+                if (!data) { std::fprintf(output, "ERR\n"); continue; }
+                std::fprintf(output, "RANKED\t%s\n", [[data base64EncodedStringWithOptions:0] UTF8String]);
+                continue;
+            }
+            if (line == "LEARNING") {
+                if (!keys.empty()) { std::fprintf(output, "ERR_BUSY\n"); continue; }
+                NSData *data = engine.learnedWords();
+                if (!data) { std::fprintf(output, "ERR\n"); continue; }
+                std::fprintf(output, "LEARNED\t%s\n", [[data base64EncodedStringWithOptions:0] UTF8String]);
+                continue;
+            }
+            if (line.rfind("FORGET\t", 0) == 0) {
+                size_t separator = line.find('\t', 7);
+                std::string pinyin = separator == std::string::npos ? "" : line.substr(7, separator - 7);
+                std::string word = separator == std::string::npos ? "" : line.substr(separator + 1);
+                bool valid = !pinyin.empty() && pinyin.size() <= 256 && !word.empty() && word.size() <= 512;
+                bool previousSeparator = true;
+                for (char key : pinyin) {
+                    if (key == '\'') { if (previousSeparator) valid = false; previousSeparator = true; }
+                    else { if (key < 'a' || key > 'z') valid = false; previousSeparator = false; }
+                }
+                if (previousSeparator) valid = false;
+                NSString *text = [[NSString alloc] initWithBytes:word.data() length:word.size() encoding:NSUTF8StringEncoding];
+                NSMutableCharacterSet *invalid = [[NSCharacterSet whitespaceAndNewlineCharacterSet] mutableCopy];
+                [invalid formUnionWithCharacterSet:[NSCharacterSet controlCharacterSet]];
+                if (!text || [text rangeOfCharacterFromSet:invalid].location != NSNotFound) valid = false;
+                if (!valid) { std::fprintf(output, "ERR\n"); continue; }
+                if (!keys.empty()) { std::fprintf(output, "ERR_BUSY\n"); continue; }
+                bool success = engine.forget(pinyin, word);
+                words.clear();
+                std::fprintf(output, "%s\n", success ? "OK" : "ERR");
+                continue;
+            }
             if (line.size() > 2 && (line[0] == 'B' || line[0] == 'L') && line[1] == ' ') {
                 std::string added = line.substr(2);
                 bool valid = keys.size() + added.size() <= 256;
